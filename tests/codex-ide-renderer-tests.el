@@ -330,6 +330,26 @@ BODY may refer to the lexical variable `session'."
           (button-activate button))
         (should (equal opened-url url))))))
 
+(ert-deftest codex-ide-renderer-opens-mailto-links-in-prose-and-tables ()
+  (with-temp-buffer
+    (let* ((address-and-query "Support@example.com?subject=Test%20message")
+           (url (concat "mailto:" address-and-query))
+           (case-fold-search nil)
+           (browse-url-handlers nil)
+           opened-urls
+           (browse-url-mailto-function
+            (lambda (target &rest _args) (push target opened-urls))))
+      (insert (format "[Email support](MAILTO:%s)\n\n" address-and-query)
+              (format "| Contact |\n| --- |\n| [Email helpdesk](%s) |\n" url))
+      (codex-ide-renderer-render-markdown-region (point-min) (point-max) t)
+      (goto-char (point-min))
+      (dolist (label '("Email support" "Email helpdesk"))
+        (search-forward label)
+        (let ((button (button-at (match-beginning 0))))
+          (should button)
+          (button-activate button)))
+      (should (equal opened-urls (list url url))))))
+
 (ert-deftest codex-ide-renderer-does-not-activate-unsupported-link-scheme ()
   (with-temp-buffer
     (let ((markdown "[run](javascript:alert)"))

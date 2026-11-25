@@ -934,13 +934,17 @@ Return a plist containing `:delete-start', `:boundary', and `:end' markers."
       (list (codex-ide-renderer--decode-file-link-target normalized) nil nil))
      (t nil))))
 
-(defun codex-ide-renderer--web-link-target (target)
-  "Return TARGET as a web URL when it uses HTTP or HTTPS, or nil."
-  (let ((normalized (codex-ide-renderer--normalize-file-link-target target)))
-    (when (string-match-p
-           "\\`https?://[^/?#[:space:]]+\\(?:[/?#][^[:space:]]*\\)?\\'"
-           normalized)
-      normalized)))
+(defun codex-ide-renderer--external-link-target (target)
+  "Return TARGET as an HTTP, HTTPS, or mailto URL, or nil."
+  (let ((normalized (codex-ide-renderer--normalize-file-link-target target))
+        (case-fold-search t))
+    (cond
+     ((string-match-p "\\`mailto:[^[:space:]<>]*\\'" normalized)
+      (concat "mailto:" (substring normalized (length "mailto:"))))
+     ((string-match-p
+       "\\`https?://[^/?#[:space:]]+\\(?:[/?#][^[:space:]]*\\)?\\'"
+       normalized)
+      normalized))))
 
 (defun codex-ide-renderer-open-file-link (&optional _button)
   "Open the file link described by text properties at point."
@@ -2180,18 +2184,18 @@ intentionally ignored."
                          (match-string 2 cell)))
                  (target (match-string 3 cell))
                  (parsed (codex-ide-renderer-parse-file-link-target target))
-                 (web-url (codex-ide-renderer--web-link-target target)))
+                 (url (codex-ide-renderer--external-link-target target)))
             (push
              (propertize
               label
               'face 'link
               'mouse-face 'highlight
               'help-echo target
-              'codex-ide-table-link (or parsed web-url)
+              'codex-ide-table-link (or parsed url)
               'codex-ide-path (nth 0 parsed)
               'codex-ide-line (nth 1 parsed)
               'codex-ide-column (nth 2 parsed)
-              'codex-ide-url web-url)
+              'codex-ide-url url)
              parts)))
          ((match-beginning 4)
           (push (propertize (match-string 4 cell)
@@ -2780,8 +2784,8 @@ TABLE-MAX-WIDTH is the effective table width to use for this pass."
                        (codex-ide-renderer--normalize-markdown-link-label label))
                       (target (match-string-no-properties 3))
                       (parsed (codex-ide-renderer-parse-file-link-target target))
-                      (web-url (codex-ide-renderer--web-link-target target)))
-                 (when (or parsed web-url)
+                      (url (codex-ide-renderer--external-link-target target)))
+                 (when (or parsed url)
                    (delete-region match-start match-end)
                    (goto-char match-start)
                    (insert display-label)
@@ -2801,7 +2805,7 @@ TABLE-MAX-WIDTH is the effective table width to use for this pass."
                     'codex-ide-path (nth 0 parsed)
                     'codex-ide-line (nth 1 parsed)
                     'codex-ide-column (nth 2 parsed)
-                    'codex-ide-url web-url
+                    'codex-ide-url url
                     'rear-nonsticky
                     codex-ide-renderer--markdown-link-nonsticky-properties)))
              (let ((code-start (match-beginning 4))
