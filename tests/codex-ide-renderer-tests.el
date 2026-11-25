@@ -338,6 +338,43 @@ BODY may refer to the lexical variable `session'."
       (should (equal (buffer-string) markdown))
       (should-not (button-at (point-min))))))
 
+(ert-deftest codex-ide-renderer-keeps-parentheses-in-markdown-link-targets ()
+  (dolist (example '(("https://example.com/Function_(mathematics)"
+                      . "https://example.com/Function_(mathematics)")
+                     ("https://example.com/a(b(c(d)))"
+                      . "https://example.com/a(b(c(d)))")
+                     ("<https://example.com/a)>" . "https://example.com/a)")
+                     ("https://example.com/a\\(b\\)" . "https://example.com/a(b)")))
+    (dolist (format-string '("%s." "| Link | Note |\n| --- | --- |\n| %s | ok |\n"))
+      (with-temp-buffer
+        (let (opened-url)
+          (insert (format format-string (format "[Reference](%s)" (car example))))
+          (codex-ide-renderer-render-markdown-region (point-min) (point-max) t)
+          (goto-char (point-min))
+          (search-forward "Reference")
+          (should (memq (char-after) '(?. ?\s)))
+          (let ((button (button-at (match-beginning 0))))
+            (should button)
+            (cl-letf (((symbol-function 'browse-url)
+                       (lambda (target &rest _) (setq opened-url target))))
+              (button-activate button)))
+          (should (equal opened-url (cdr example))))))))
+
+(ert-deftest codex-ide-renderer-streaming-waits-for-parenthesized-link-end ()
+  (with-temp-buffer
+    (let ((codex-ide-renderer-markdown-streaming-defer-delay nil)
+          (partial "[Reference](https://example.com/Function_(mathematics)"))
+      (insert partial)
+      (codex-ide-renderer-render-markdown-streaming (point-min) (point-max))
+      (should (equal (buffer-string) partial))
+      (should-not (button-at (point-min)))
+      (goto-char (point-max))
+      (insert ")")
+      (codex-ide-renderer-render-markdown-streaming (point-min) (point-max))
+      (should (equal (buffer-string) "Reference"))
+      (should (equal (button-get (button-at (point-min)) 'codex-ide-url)
+                     "https://example.com/Function_(mathematics)")))))
+
 (ert-deftest codex-ide-renderer-table-width-uses-rendered-link-label ()
   (with-temp-buffer
     (let ((codex-ide-renderer-markdown-table-max-width 20)

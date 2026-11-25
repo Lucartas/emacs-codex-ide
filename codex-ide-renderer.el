@@ -36,6 +36,7 @@
 (require 'button)
 (require 'cl-lib)
 (require 'color)
+(require 'rx)
 (require 'seq)
 (require 'subr-x)
 (require 'url-util)
@@ -903,9 +904,9 @@ Return a plist containing `:delete-start', `:boundary', and `:end' markers."
      "\n")))
 
 (defun codex-ide-renderer--normalize-file-link-target (target)
-  "Return file link TARGET with permissive outer wrappers removed."
+  "Return link TARGET with outer wrappers removed and punctuation unescaped."
   (string-trim
-   (replace-regexp-in-string "\\\\/" "/" target t t)
+   (replace-regexp-in-string (rx "\\" (group (any "/()"))) "\\1" target t)
    "[ <]+"
    "[ >]+"))
 
@@ -2104,19 +2105,31 @@ intentionally ignored."
         (t 'left))))
    (codex-ide-renderer--markdown-table-parse-row separator)))
 
+(defconst codex-ide-renderer--markdown-link-pattern
+  (let* ((escaped (rx "\\" (not (any "\n"))))
+         (character
+          (concat "\\(?:" escaped "\\|" (rx (not (any "()<>\\\n"))) "\\)"))
+         (destination-atom character)
+         (angle-destination
+          (concat "[ \t]*<\\(?:" escaped "\\|" (rx (not (any "<>\\\n")))
+                  "\\)*>[ \t]*")))
+    ;; CommonMark permits a nesting limit of three or more.
+    (dotimes (_ 3)
+      (setq destination-atom
+            (concat "\\(?:" character "\\|(" destination-atom "*)\\)")))
+    (concat "\\(\\[\\([^]\n]+\\)\\](\\("
+            angle-destination "\\|" destination-atom "+\\))\\)"))
+  "Match a Markdown link with a balanced or angle-bracketed destination.")
+
 (defconst codex-ide-renderer--markdown-table-inline-pattern
   (concat
-   "\\(\\[\\([^]\n]+\\)\\](\\([^)\n]+\\))\\)"
+   codex-ide-renderer--markdown-link-pattern
    "\\|`\\([^`\n]+\\)`"
    "\\|<[bB][rR][ \t]*/?>"
    "\\|\\(\\*\\*\\([^*\n ]\\(?:[^*\n]*[^*\n ]\\)?\\)\\*\\*\\)"
    "\\|\\(__\\([^_\n ]\\(?:[^\n]*?[^_\n ]\\)?\\)__\\)"
    "\\|\\(\\*\\([^*\n ]\\(?:[^*\n]*[^*\n ]\\)?\\)\\*\\)"
    "\\|\\(_\\([^_\n ]\\(?:[^_\n]*[^_\n ]\\)?\\)_\\)"))
-
-(defconst codex-ide-renderer--markdown-link-pattern
-  "\\(\\[\\([^]\n]+\\)\\](\\([^)\n]+\\))\\)"
-  "Pattern matching a simple inline markdown link `[label](target)`.")
 
 (defconst codex-ide-renderer--markdown-inline-code-pattern
   "`\\([^`\n]+\\)`"
