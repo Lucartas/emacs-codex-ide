@@ -1625,19 +1625,39 @@ Return a plist containing inserted markers and updated writable ranges."
    (let ((inhibit-read-only t))
      (codex-ide-renderer--clear-streaming-deferred-markdown start end))))
 
-(defun codex-ide-renderer--markdown-last-unmatched-single-backtick (text)
-  "Return the last unmatched single-backtick position in TEXT, or nil.
-Runs of three or more backticks are fenced-code delimiters and are
-intentionally ignored."
-  (let ((pos 0)
-        (open nil))
-    (while (string-match "`+" text pos)
-      (let ((run-start (match-beginning 0))
-            (run-end (match-end 0)))
-        (when (= (- run-end run-start) 1)
-          (setq open (if open nil run-start)))
-        (setq pos run-end)))
-    open))
+(defun codex-ide-renderer--markdown-code-span-close (text start width)
+  "Find a run of WIDTH backticks in TEXT at or after START."
+  (save-match-data
+    (catch 'close
+      (while (string-match "`+" text start)
+        (setq start (match-end 0))
+        (when (= (- start (match-beginning 0)) width)
+          (throw 'close (match-beginning 0)))))))
+
+(defun codex-ide-renderer--markdown-code-span-close-in-buffer (start width limit)
+  "Find WIDTH closing backticks after START, up to the line end or LIMIT."
+  (save-match-data
+    (save-excursion
+      (goto-char start)
+      (let ((end (min limit (line-end-position))))
+        (catch 'close
+          (while (re-search-forward "`+" end t)
+            (when (= (- (match-end 0) (match-beginning 0)) width)
+              (throw 'close (match-beginning 0)))))))))
+
+(defun codex-ide-renderer--markdown-incomplete-code-start (text)
+  "Return the first backtick delimiter in TEXT awaiting its matching run."
+  (let ((pos 0))
+    (catch 'incomplete
+      (while (string-match codex-ide-renderer--markdown-link-or-code-pattern text pos)
+        (setq pos (match-end 0))
+        (when-let* ((open (match-beginning 4)))
+          (let* ((width (- pos open))
+                 (close (codex-ide-renderer--markdown-code-span-close text pos width)))
+            (unless close
+              (throw 'incomplete open))
+            (setq pos (+ close width)))))
+      nil)))
 
 (defun codex-ide-renderer--markdown-incomplete-link-start (text)
   "Return the last incomplete markdown link start in TEXT, or nil."
@@ -1677,24 +1697,29 @@ intentionally ignored."
   (when-let* ((region (codex-ide-renderer--streaming-current-line-inline-region
                        start
                        end)))
-    (let* ((line-start (car region))
-           (line-end (cdr region))
-           ;; Keep text after an opening backtick intact until its span closes.
-           (open-code
-            (codex-ide-renderer--markdown-last-unmatched-single-backtick
-             (buffer-substring-no-properties line-start line-end)))
-           (limit (copy-marker (if open-code (+ line-start open-code) line-end) t)))
+    (let ((limit (copy-marker (cdr region) t)))
       (save-excursion
-        (goto-char line-start)
+        (goto-char (car region))
         (while (re-search-forward codex-ide-renderer--markdown-link-or-code-pattern
                                   limit t)
-          (let ((next-marker (copy-marker (match-end 0) t)))
-            (unless (get-text-property (match-beginning 0) 'codex-ide-markdown)
-              (codex-ide-renderer-maybe-render-markdown-region
-               (match-beginning 0)
-               (match-end 0)))
-            (goto-char next-marker)
-            (set-marker next-marker nil))))
+          (let ((span-start (match-beginning 0))
+                (span-end (match-end 0)))
+            (when (match-beginning 4)
+              (let ((width (- span-end span-start)))
+                (setq span-end
+                      (when-let* ((close
+                                   (codex-ide-renderer--markdown-code-span-close-in-buffer
+                                    span-end width limit)))
+                        (+ close width)))))
+            (if span-end
+                (let ((next (copy-marker span-end t)))
+                  (unless (get-text-property span-start 'codex-ide-markdown)
+                    (codex-ide-renderer-maybe-render-markdown-region
+                     span-start (marker-position next)))
+                  (goto-char next)
+                  (set-marker next nil))
+              ;; A later chunk may close this span. Keep its contents intact.
+              (goto-char limit)))))
       (set-marker limit nil))))
 
 (defun codex-ide-renderer--streaming-deferred-markdown-span (start end)
@@ -1711,7 +1736,7 @@ intentionally ignored."
               (delq nil
                     (list
                      (codex-ide-renderer--markdown-incomplete-link-start tail)
-                     (codex-ide-renderer--markdown-last-unmatched-single-backtick tail)))))
+                     (codex-ide-renderer--markdown-incomplete-code-start tail)))))
         (when candidates
           (cons (+ line-start (apply #'min candidates)) end))))))
 
@@ -2127,15 +2152,9 @@ intentionally ignored."
             angle-destination "\\|" destination-atom "+\\))\\)"))
   "Match a Markdown link with a balanced or angle-bracketed destination.")
 
-(defconst codex-ide-renderer--markdown-inline-code-pattern
-  "`\\([^`\n]+\\)`"
-  "Pattern matching inline markdown code spans.")
-
 (defconst codex-ide-renderer--markdown-link-or-code-pattern
-  (concat codex-ide-renderer--markdown-link-pattern
-          "\\|"
-          codex-ide-renderer--markdown-inline-code-pattern)
-  "Match links and code spans in source order to respect their boundaries.")
+  (concat codex-ide-renderer--markdown-link-pattern "\\|\\(`+\\)")
+  "Match links and runs of backticks in source order.")
 
 (defconst codex-ide-renderer--markdown-table-inline-pattern
   (concat
@@ -2203,9 +2222,16 @@ intentionally ignored."
               'codex-ide-url url)
              parts)))
          ((match-beginning 4)
-          (push (propertize (match-string 4 cell)
-                            'face 'font-lock-keyword-face)
-                parts))
+          (let* ((width (- match-end match-start))
+                 (close (codex-ide-renderer--markdown-code-span-close
+                         cell match-end width)))
+            (if close
+                (progn
+                  (push (propertize (substring cell match-end close)
+                                    'face 'font-lock-keyword-face)
+                        parts)
+                  (setq match-end (+ close width)))
+              (push (substring cell match-start match-end) parts))))
          ((string-match-p "\\`<[bB][rR][ \t]*/?>\\'" (match-string 0 cell))
           (push "\n" parts))
          ((match-beginning 6)
@@ -2813,20 +2839,23 @@ TABLE-MAX-WIDTH is the effective table width to use for this pass."
                     'codex-ide-url url
                     'rear-nonsticky
                     codex-ide-renderer--markdown-link-nonsticky-properties)))
-             (let ((code-start (match-beginning 4))
-                   (code-end (match-end 4)))
-               (add-text-properties
-                code-start code-end
-                '(face font-lock-keyword-face
-                       codex-ide-markdown t))
-               (add-text-properties
-                (match-beginning 0) code-start
-                '(display ""
-                          codex-ide-markdown t))
-               (add-text-properties
-                code-end (match-end 0)
-                '(display ""
-                          codex-ide-markdown t))))))
+             (let* ((span-start (match-beginning 4))
+                    (code-start (match-end 4))
+                    (width (- code-start span-start))
+                    (code-end (codex-ide-renderer--markdown-code-span-close-in-buffer
+                               code-start width end-marker)))
+               (when code-end
+                 (let ((span-end (+ code-end width)))
+                   (add-text-properties
+                    code-start code-end
+                    '(face font-lock-keyword-face codex-ide-markdown t))
+                   (add-text-properties
+                    span-start code-start
+                    '(display "" codex-ide-markdown t))
+                   (add-text-properties
+                    code-end span-end
+                    '(display "" codex-ide-markdown t))
+                   (goto-char span-end)))))))
        (codex-ide-renderer--render-markdown-emphasis
         start
         (marker-position end-marker)

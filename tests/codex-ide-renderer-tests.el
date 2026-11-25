@@ -433,6 +433,61 @@ BODY may refer to the lexical variable `session'."
                   'font-lock-keyword-face))
       (should-not (button-at (match-beginning 0))))))
 
+(ert-deftest codex-ide-renderer-keeps-links-literal-in-multiple-backtick-spans ()
+  (dolist (width '(2 3))
+    (with-temp-buffer
+      (let* ((fence (make-string width ?`))
+             (different-width (make-string (1+ width) ?`))
+             (code (format "%s %s `[Literal](https://example.com/)` %s"
+                           fence different-width fence)))
+        (insert "Show " code " [Open](https://example.org/).")
+        (dotimes (_ 2)
+          (codex-ide-renderer-render-markdown-region (point-min) (point-max)))
+        (should (equal (buffer-string) (concat "Show " code " Open.")))
+        (goto-char (point-min))
+        (search-forward fence)
+        (should (equal (get-text-property (match-beginning 0) 'display) ""))
+        (search-forward different-width)
+        (should-not (get-text-property (match-beginning 0) 'display))
+        (search-forward "[Literal]")
+        (should (eq (get-text-property (match-beginning 0) 'face)
+                    'font-lock-keyword-face))
+        (should-not (button-at (match-beginning 0)))
+        (search-forward "Open")
+        (should (button-at (match-beginning 0)))))))
+
+(ert-deftest codex-ide-renderer-keeps-links-literal-in-multiple-backtick-table-cells ()
+  (with-temp-buffer
+    (insert "| Example | Link |\n| --- | --- |\n"
+            "| `` `[Literal](https://example.com/)` `` | [Open](https://example.org/) |\n")
+    (codex-ide-renderer-render-markdown-region (point-min) (point-max) t)
+    (goto-char (point-min))
+    (search-forward "`[Literal](https://example.com/)`")
+    (should (memq 'font-lock-keyword-face
+                  (ensure-list (get-text-property (match-beginning 0) 'face))))
+    (should-not (button-at (match-beginning 0)))
+    (search-forward "Open")
+    (should (button-at (match-beginning 0)))))
+
+(ert-deftest codex-ide-renderer-streaming-waits-for-matching-backtick-run ()
+  (with-temp-buffer
+    (let ((codex-ide-renderer-markdown-streaming-defer-delay nil)
+          (source "Show `` `[Literal](https://example.com/)` "))
+      (insert source)
+      (codex-ide-renderer-render-markdown-streaming (point-min) (point-max))
+      (insert "`")
+      (codex-ide-renderer-render-markdown-streaming (point-min) (point-max))
+      (should (equal (buffer-string) (concat source "`")))
+      (should-not (text-property-not-all (point-min) (point-max) 'button nil))
+      (insert "`.")
+      (codex-ide-renderer-render-markdown-streaming (point-min) (point-max))
+      (should (equal (buffer-string) (concat source "``.")))
+      (goto-char (point-min))
+      (search-forward "[Literal]")
+      (should (eq (get-text-property (match-beginning 0) 'face)
+                  'font-lock-keyword-face))
+      (should-not (button-at (match-beginning 0))))))
+
 (ert-deftest codex-ide-renderer-table-width-uses-rendered-link-label ()
   (with-temp-buffer
     (let ((codex-ide-renderer-markdown-table-max-width 20)
