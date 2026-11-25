@@ -2788,6 +2788,92 @@
       (should (string-match-p "\\* Ran command: echo hi" (buffer-string)))
       (should (string-match-p "  \\$ echo hi" (buffer-string))))))
 
+(ert-deftest codex-ide-split-shell-words-preserves-quoting-and-escaping ()
+  (should (equal (codex-ide--split-shell-words
+                  "printf '' \"\" a\\ b 'c\\d' \"e\\\"f\" 'g|h' i\\|j|cat\n'λ'")
+                 '("printf" "" "" "a b" "c\\d" "e\"f" "g|h" "i|j" "|" "cat" "λ")))
+  (should-not (codex-ide--split-shell-words "echo 'unterminated"))
+  (should-not (codex-ide--split-shell-words "echo trailing\\")))
+
+(ert-deftest codex-ide-split-shell-words-preserves-large-quoted-patch ()
+  (let ((patch (concat "--- a/example\n+++ b/example\n@@ -1 +1 @@\n+"
+                       (make-string 36868 ?x)
+                       "\n")))
+    (should (equal (codex-ide--split-shell-words
+                    (concat "printf '%s' '" patch "' | apply_patch"))
+                   (list "printf" "%s" patch "|" "apply_patch")))))
+
+(ert-deftest codex-ide-command-analysis-distinguishes-literal-pipes ()
+  (should (equal (plist-get (codex-ide--command-analysis
+                            "nl -ba 'a|b' | sed -n '3,5p'")
+                           :read-summary)
+                 "Read a|b (lines 3 to 5)"))
+  (should-not (plist-get (codex-ide--command-analysis
+                         "nl -ba file \\| sed -n '3,5p'")
+                        :read-summary)))
+
+(ert-deftest codex-ide-command-execution-bounds-analysis-of-large-patches ()
+  (with-temp-buffer
+    (codex-ide-session-mode)
+    (let* ((session (make-codex-ide-session
+                     :buffer (current-buffer)
+                     :status "idle"
+                     :item-states (make-hash-table :test 'equal)))
+           (patch (concat "--- a/example\n+++ b/example\n@@ -1 +1 @@\n+"
+                          (make-string 36868 ?x)
+                          "\n"))
+           (script (format "printf '%%s' '%s' | apply_patch" patch))
+           (command (concat "/bin/zsh -lc " (shell-quote-argument script)))
+           (split-words (symbol-function 'codex-ide--split-shell-words))
+           parsed)
+      (setq-local codex-ide--session session)
+      (codex-ide--insert-input-prompt session "submitted prompt")
+      (codex-ide--begin-turn-display session)
+      (cl-letf (((symbol-function 'codex-ide--split-shell-words)
+                 (lambda (input &rest args)
+                   (push (cons input args) parsed)
+                   (apply split-words input args)))
+                ((symbol-function 'codex-ide-renderer-fontify-code-block-region)
+                 (lambda (&rest _)
+                   (ert-fail "Large shell detail should skip fontification"))))
+        (codex-ide--render-item-start
+         session
+         `((id . "patch") (type . "commandExecution") (command . ,command))))
+      (should (equal (nreverse parsed)
+                     (list (list command t) (list script nil t))))
+      (let ((state (codex-ide--item-state session "patch")))
+        (should (string-prefix-p "Ran command: printf" (plist-get state :summary)))
+        (should (string-suffix-p "..." (plist-get state :summary)))
+        (should-not (plist-get state :search-request)))
+      (should (string-search (concat "  $ " script) (buffer-string))))))
+
+(ert-deftest codex-ide-command-execution-oversized-rg-reports-zero-hits ()
+  (let* ((pattern (make-string 5000 ?x))
+         (script (format "'/opt/bin/rg' -n '%s' codex-ide.el" pattern))
+         (commands (list (vector "rg" "-n" pattern "codex-ide.el")
+                         (concat "/bin/zsh -lc " (shell-quote-argument script)))))
+    (dolist (command commands)
+      (with-temp-buffer
+        (codex-ide-session-mode)
+        (let ((session (make-codex-ide-session
+                        :buffer (current-buffer)
+                        :status "idle"
+                        :item-states (make-hash-table :test 'equal))))
+          (setq-local codex-ide--session session)
+          (codex-ide--insert-input-prompt session "submitted prompt")
+          (codex-ide--begin-turn-display session)
+          (codex-ide--render-item-start
+           session
+           `((id . "search") (type . "commandExecution") (command . ,command)))
+          (codex-ide--render-item-completion
+           session
+           '((id . "search") (type . "commandExecution")
+             (status . "failed") (exitCode . 1)))
+          (let ((text (buffer-string)))
+            (should (string-match-p "^\\* Ran command: .*\\.\\.\\.$" text))
+            (should (string-search "  └ found 0 hits" text))
+            (should-not (string-search "failed with exit code 1" text))))))))
+
 (ert-deftest codex-ide-command-execution-omits-shell-wrapper-in-detail ()
   (with-temp-buffer
     (codex-ide-session-mode)
