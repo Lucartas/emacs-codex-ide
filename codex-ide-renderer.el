@@ -904,11 +904,16 @@ Return a plist containing `:delete-start', `:boundary', and `:end' markers."
      "\n")))
 
 (defun codex-ide-renderer--normalize-file-link-target (target)
-  "Return link TARGET with outer wrappers removed and punctuation unescaped."
-  (string-trim
-   (replace-regexp-in-string (rx "\\" (group (any "/()"))) "\\1" target t)
-   "[ <]+"
-   "[ >]+"))
+  "Remove outer wrappers from link TARGET and unescape Markdown punctuation."
+  (let* ((trimmed (string-trim target "[ \t]+" "[ \t]+"))
+         (destination
+          (if (string-prefix-p "<" trimmed)
+              (string-trim (string-remove-suffix ">" (substring trimmed 1))
+                           "[ \t]+" "[ \t]+")
+            trimmed)))
+    ;; CommonMark defines escapes for the ASCII punctuation ranges.
+    (replace-regexp-in-string
+     (rx "\\" (group (any "!-/" ":-@" "[-`" "{-~"))) "\\1" destination t)))
 
 (defun codex-ide-renderer--decode-file-link-target (target)
   "Return TARGET with percent-encoded path characters decoded."

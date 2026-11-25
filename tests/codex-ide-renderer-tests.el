@@ -358,13 +358,18 @@ BODY may refer to the lexical variable `session'."
       (should (equal (buffer-string) markdown))
       (should-not (button-at (point-min))))))
 
-(ert-deftest codex-ide-renderer-keeps-parentheses-in-markdown-link-targets ()
+(ert-deftest codex-ide-renderer-preserves-markdown-link-targets ()
   (dolist (example '(("https://example.com/Function_(mathematics)"
                       . "https://example.com/Function_(mathematics)")
                      ("https://example.com/a(b(c(d)))"
                       . "https://example.com/a(b(c(d)))")
                      ("<https://example.com/a)>" . "https://example.com/a)")
-                     ("https://example.com/a\\(b\\)" . "https://example.com/a(b)")))
+                     ("https://example.com/a\\(b\\)" . "https://example.com/a(b)")
+                     ("https://example.com/?q=one\\&x=two"
+                      . "https://example.com/?q=one&x=two")
+                     ("https://example.com/?q=one\\\\&x=two"
+                      . "https://example.com/?q=one\\&x=two")
+                     ("<https://example.com/a\\>>" . "https://example.com/a>")))
     (dolist (format-string '("%s." "| Link | Note |\n| --- | --- |\n| %s | ok |\n"))
       (with-temp-buffer
         (let (opened-url)
