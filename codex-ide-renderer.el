@@ -1474,6 +1474,12 @@ Return a plist containing inserted markers and updated writable ranges."
                       (or (next-single-property-change
                            pos 'codex-ide-markdown nil (marker-position end-marker))
                           (marker-position end-marker))
+                      ;; A link can touch another rendered span with the same
+                      ;; `codex-ide-markdown' value.
+                      (or (next-single-property-change
+                           pos 'codex-ide-markdown-link-original
+                           nil (marker-position end-marker))
+                          (marker-position end-marker))
                       (or (next-single-property-change
                            pos 'codex-ide-markdown-code-fontified nil
                            (marker-position end-marker))
@@ -1662,34 +1668,25 @@ intentionally ignored."
   (when-let* ((region (codex-ide-renderer--streaming-current-line-inline-region
                        start
                        end)))
-    (let ((line-start (car region))
-          (line-end-marker (copy-marker (cdr region) t)))
+    (let* ((line-start (car region))
+           (line-end (cdr region))
+           ;; Keep text after an opening backtick intact until its span closes.
+           (open-code
+            (codex-ide-renderer--markdown-last-unmatched-single-backtick
+             (buffer-substring-no-properties line-start line-end)))
+           (limit (copy-marker (if open-code (+ line-start open-code) line-end) t)))
       (save-excursion
         (goto-char line-start)
-        (while (re-search-forward
-                codex-ide-renderer--markdown-link-pattern
-                (min (marker-position line-end-marker) (point-max))
-                t)
-          (let ((next-marker (copy-marker (match-end 1) t)))
-            (unless (get-text-property (match-beginning 1) 'codex-ide-markdown)
+        (while (re-search-forward codex-ide-renderer--markdown-link-or-code-pattern
+                                  limit t)
+          (let ((next-marker (copy-marker (match-end 0) t)))
+            (unless (get-text-property (match-beginning 0) 'codex-ide-markdown)
               (codex-ide-renderer-maybe-render-markdown-region
-               (match-beginning 1)
-               (match-end 1)))
-            (goto-char
-             (min (marker-position line-end-marker)
-                  (point-max)
-                  (max (point) (marker-position next-marker))))
-            (set-marker next-marker nil)))
-        (goto-char line-start)
-        (while (re-search-forward
-                codex-ide-renderer--markdown-inline-code-pattern
-                (min (marker-position line-end-marker) (point-max))
-                t)
-          (unless (get-text-property (match-beginning 0) 'codex-ide-markdown)
-            (codex-ide-renderer-maybe-render-markdown-region
-             (match-beginning 0)
-             (match-end 0)))))
-      (set-marker line-end-marker nil))))
+               (match-beginning 0)
+               (match-end 0)))
+            (goto-char next-marker)
+            (set-marker next-marker nil))))
+      (set-marker limit nil))))
 
 (defun codex-ide-renderer--streaming-deferred-markdown-span (start end)
   "Return the trailing incomplete inline markdown span between START and END."
@@ -2121,19 +2118,24 @@ intentionally ignored."
             angle-destination "\\|" destination-atom "+\\))\\)"))
   "Match a Markdown link with a balanced or angle-bracketed destination.")
 
+(defconst codex-ide-renderer--markdown-inline-code-pattern
+  "`\\([^`\n]+\\)`"
+  "Pattern matching inline markdown code spans.")
+
+(defconst codex-ide-renderer--markdown-link-or-code-pattern
+  (concat codex-ide-renderer--markdown-link-pattern
+          "\\|"
+          codex-ide-renderer--markdown-inline-code-pattern)
+  "Match links and code spans in source order to respect their boundaries.")
+
 (defconst codex-ide-renderer--markdown-table-inline-pattern
   (concat
-   codex-ide-renderer--markdown-link-pattern
-   "\\|`\\([^`\n]+\\)`"
+   codex-ide-renderer--markdown-link-or-code-pattern
    "\\|<[bB][rR][ \t]*/?>"
    "\\|\\(\\*\\*\\([^*\n ]\\(?:[^*\n]*[^*\n ]\\)?\\)\\*\\*\\)"
    "\\|\\(__\\([^_\n ]\\(?:[^\n]*?[^_\n ]\\)?\\)__\\)"
    "\\|\\(\\*\\([^*\n ]\\(?:[^*\n]*[^*\n ]\\)?\\)\\*\\)"
    "\\|\\(_\\([^_\n ]\\(?:[^_\n]*[^_\n ]\\)?\\)_\\)"))
-
-(defconst codex-ide-renderer--markdown-inline-code-pattern
-  "`\\([^`\n]+\\)`"
-  "Pattern matching inline markdown code spans.")
 
 (defconst codex-ide-renderer--markdown-bold-asterisk-pattern
   "\\(^\\|[^*]\\)\\(\\*\\*\\([^*\n ]\\(?:[^*\n]*[^*\n ]\\)?\\)\\*\\*\\)"
@@ -2764,63 +2766,58 @@ TABLE-MAX-WIDTH is the effective table width to use for this pass."
         allow-trailing-tables)
        (goto-char start)
        (while (re-search-forward
-               codex-ide-renderer--markdown-link-pattern
-               (marker-position end-marker)
-               t)
-         (unless (or (get-text-property (match-beginning 1) 'codex-ide-markdown)
-                     (get-text-property (1- (match-end 1)) 'codex-ide-markdown))
-           (let* ((match-start (match-beginning 1))
-                  (match-end (match-end 1))
-                  (original (match-string-no-properties 1))
-                  (label (match-string-no-properties 2))
-                  (display-label (codex-ide-renderer--normalize-markdown-link-label label))
-                  (target (match-string-no-properties 3))
-                  (parsed (codex-ide-renderer-parse-file-link-target target))
-                  (web-url (codex-ide-renderer--web-link-target target)))
-             (when (or parsed web-url)
-               (delete-region match-start match-end)
-               (goto-char match-start)
-               (insert display-label)
-	       (make-text-button
-                match-start (point)
-                'action (if parsed
-                            #'codex-ide-renderer-open-file-link
-                          #'codex-ide-renderer-open-url-link)
-                'follow-link t
-                'keymap (if parsed
-                            codex-ide-renderer-link-keymap
-                          codex-ide-renderer-action-button-keymap)
-                'help-echo target
-                'face 'link
-                'codex-ide-markdown t
-                'codex-ide-markdown-link-original original
-                'codex-ide-path (nth 0 parsed)
-                'codex-ide-line (nth 1 parsed)
-                'codex-ide-column (nth 2 parsed)
-                'codex-ide-url web-url
-                'rear-nonsticky
-                codex-ide-renderer--markdown-link-nonsticky-properties)))))
-       (goto-char start)
-       (while (re-search-forward
-               codex-ide-renderer--markdown-inline-code-pattern
+               codex-ide-renderer--markdown-link-or-code-pattern
                (marker-position end-marker)
                t)
          (unless (or (get-text-property (match-beginning 0) 'codex-ide-markdown)
                      (get-text-property (1- (match-end 0)) 'codex-ide-markdown))
-           (let ((code-start (match-beginning 1))
-                 (code-end (match-end 1)))
-             (add-text-properties
-              code-start code-end
-              '(face font-lock-keyword-face
-                     codex-ide-markdown t))
-             (add-text-properties
-              (match-beginning 0) code-start
-              '(display ""
-			codex-ide-markdown t))
-             (add-text-properties
-              code-end (match-end 0)
-              '(display ""
-			codex-ide-markdown t)))))
+           (if (match-beginning 1)
+               (let* ((match-start (match-beginning 1))
+                      (match-end (match-end 1))
+                      (original (match-string-no-properties 1))
+                      (label (match-string-no-properties 2))
+                      (display-label
+                       (codex-ide-renderer--normalize-markdown-link-label label))
+                      (target (match-string-no-properties 3))
+                      (parsed (codex-ide-renderer-parse-file-link-target target))
+                      (web-url (codex-ide-renderer--web-link-target target)))
+                 (when (or parsed web-url)
+                   (delete-region match-start match-end)
+                   (goto-char match-start)
+                   (insert display-label)
+                   (make-text-button
+                    match-start (point)
+                    'action (if parsed
+                                #'codex-ide-renderer-open-file-link
+                              #'codex-ide-renderer-open-url-link)
+                    'follow-link t
+                    'keymap (if parsed
+                                codex-ide-renderer-link-keymap
+                              codex-ide-renderer-action-button-keymap)
+                    'help-echo target
+                    'face 'link
+                    'codex-ide-markdown t
+                    'codex-ide-markdown-link-original original
+                    'codex-ide-path (nth 0 parsed)
+                    'codex-ide-line (nth 1 parsed)
+                    'codex-ide-column (nth 2 parsed)
+                    'codex-ide-url web-url
+                    'rear-nonsticky
+                    codex-ide-renderer--markdown-link-nonsticky-properties)))
+             (let ((code-start (match-beginning 4))
+                   (code-end (match-end 4)))
+               (add-text-properties
+                code-start code-end
+                '(face font-lock-keyword-face
+                       codex-ide-markdown t))
+               (add-text-properties
+                (match-beginning 0) code-start
+                '(display ""
+                          codex-ide-markdown t))
+               (add-text-properties
+                code-end (match-end 0)
+                '(display ""
+                          codex-ide-markdown t))))))
        (codex-ide-renderer--render-markdown-emphasis
         start
         (marker-position end-marker)
