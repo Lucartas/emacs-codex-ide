@@ -6,6 +6,27 @@
 (require 'codex-ide-test-fixtures)
 (require 'codex-ide)
 
+(ert-deftest codex-ide-region-annotation-autoloads-with-session-support ()
+  (with-temp-buffer
+    (let ((status
+           (call-process
+            (or (getenv "RUN_TESTS_EMACS_EXECUTABLE")
+                (expand-file-name invocation-name invocation-directory))
+            nil t nil "-Q" "--batch" "-L" codex-ide-test--root-directory
+            "-l" "codex-ide-autoloads"
+            "--eval"
+            "(let ((command 'codex-ide-annotate-region))
+               (unless (and (commandp command)
+                            (autoloadp (symbol-function command))
+                            (not (featurep 'codex-ide-session)))
+                 (error \"Expected an unloaded annotation command\"))
+               (autoload-do-load (symbol-function command) command)
+               (unless (and (commandp command)
+                            (fboundp 'codex-ide--ensure-session-for-current-project))
+                 (error \"Expected the annotation command and its session support\")))")))
+      (ert-info ((buffer-string))
+        (should (equal status 0))))))
+
 (ert-deftest codex-ide-region-annotations-share-one-editable-prompt ()
   (let* ((project-dir (codex-ide-test--make-temp-project))
          (first-file (codex-ide-test--make-project-file

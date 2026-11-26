@@ -6949,7 +6949,6 @@ the mismatch warning only reflects meaningful behavior changes."
   (when (codex-ide--queued-prompt-p session)
     (codex-ide--submit-queued-prompt session)))
 
-;;;###autoload
 (defun codex-ide-annotate-region ()
   "Append the active region and a note to the current Codex prompt draft.
 The draft is not submitted; use `codex-ide-submit' when it is ready."
