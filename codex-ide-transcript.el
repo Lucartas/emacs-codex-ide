@@ -6626,7 +6626,8 @@ compatibility with older app-server payloads and global notifications."
   "Return prompt text for SESSION using explicit PROMPT or the active input."
   (or prompt
       (if (eq (current-buffer) (codex-ide-session-buffer session))
-          (codex-ide--current-input session)
+          (codex-ide-mention-preserve-literal-text
+           (codex-ide--current-input session) session)
         (read-string "Codex prompt: "))))
 
 (defun codex-ide--submission-origin-buffer (session)
@@ -6965,13 +6966,15 @@ The draft is not submitted; use `codex-ide-submit' when it is ready."
         (user-error "Annotation cannot be empty"))
       (let* ((session (codex-ide--ensure-session-for-current-project))
              (annotation
-              (format "Annotation for %s:%d:%d-%d:%d\nNote: %s\nSelected text:\n%s"
-                      source
-                      (alist-get 'start-line region)
-                      (alist-get 'start-column region)
-                      (alist-get 'end-line region)
-                      (alist-get 'end-column region)
-                      note selection)))
+              (concat
+               (format "Annotation for %s:%d:%d-%d:%d\nNote: %s\nSelected text:\n"
+                       source
+                       (alist-get 'start-line region)
+                       (alist-get 'start-column region)
+                       (alist-get 'end-line region)
+                       (alist-get 'end-column region)
+                       note)
+               (codex-ide-mention-mark-literal selection 0 (length selection)))))
         (with-current-buffer (codex-ide-session-buffer session)
           (save-excursion
             (codex-ide--ensure-input-prompt session)

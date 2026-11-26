@@ -90,6 +90,60 @@
                 (should (string-match-p "Selected text:\nalpha" sent-text))
                 (should (string-match-p "Selected text:\nbeta" sent-text))))))))))
 
+(ert-deftest codex-ide-region-annotation-submits-selected-text-literally ()
+  (let* ((project-dir (codex-ide-test--make-temp-project))
+         (review-path (expand-file-name "review/SKILL.md" project-dir))
+         (intentional-path (expand-file-name "intentional/SKILL.md" project-dir))
+         (selection (format "echo \"$review\"\n[$review](%s)" review-path))
+         (sent-input nil))
+    (codex-ide-test-with-fixture project-dir
+      (codex-ide-test-with-fake-processes
+        (let ((transient-mark-mode t)
+              (session (codex-ide--create-process-session)))
+          (setf (codex-ide-session-thread-id session) "thread-annotation"
+                (codex-ide-session-status session) "idle")
+          (codex-ide--session-metadata-put
+           session :skills-list
+           (list `((name . "review") (enabled . t) (path . ,review-path))
+                 `((name . "intentional") (enabled . t) (path . ,intentional-path))))
+          (codex-ide--session-metadata-put session :skills-list-state 'ready)
+          (with-current-buffer (codex-ide-session-buffer session)
+            (codex-ide--insert-input-prompt session))
+          (cl-letf (((symbol-function 'read-from-minibuffer)
+                     (lambda (&rest _) "Check this snippet"))
+                    ((symbol-function 'codex-ide--ensure-session-for-current-project)
+                     (lambda () session))
+                    ((symbol-function 'codex-ide--request-sync)
+                     (lambda (_session method params)
+                       (when (equal method "turn/start")
+                         (setq sent-input (alist-get 'input params))
+                         (error "Submission failed")))))
+            (with-temp-buffer
+              (insert selection)
+              (push-mark (point-min) t t)
+              (activate-mark)
+              (codex-ide-annotate-region))
+            (with-current-buffer (codex-ide-session-buffer session)
+              (goto-char (codex-ide--input-end-position session))
+              (insert-and-inherit "\nUse $intentional")
+              (should-error (codex-ide-submit))
+              (should sent-input)
+              (should (string-suffix-p (concat selection "\nUse $intentional")
+                                       (alist-get 'text (aref sent-input 0))))
+              (should (equal (delq nil (mapcar (lambda (item) (alist-get 'path item))
+                                               sent-input))
+                             (list intentional-path)))
+              ;; The failed submission restores the draft, and history can recall it.
+              (dolist (recall '(nil t))
+                (when recall
+                  (codex-ide-previous-prompt-history))
+                (let* ((draft (codex-ide--current-input session))
+                       (items (codex-ide-mention-input-items draft session)))
+                  (should (string-suffix-p (concat selection "\nUse $intentional")
+                                           draft))
+                  (should (equal (mapcar (lambda (item) (alist-get 'path item)) items)
+                                 (list intentional-path))))))))))))
+
 (ert-deftest codex-ide-region-annotation-preserves-draft-and-skill-binding ()
   (let* ((project-dir (codex-ide-test--make-temp-project))
          (file-path (codex-ide-test--make-project-file
