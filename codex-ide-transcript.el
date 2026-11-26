@@ -6978,11 +6978,21 @@ The draft is not submitted; use `codex-ide-submit' when it is ready."
             (codex-ide--ensure-input-prompt session)
             (unless (codex-ide--input-prompt-active-p session)
               (user-error "No editable Codex prompt is available"))
-            (let ((draft (codex-ide--current-input session)))
-              (codex-ide--replace-current-input
-               session
-               (concat (unless (string-empty-p draft) (concat draft "\n\n"))
-                       annotation)))))
+            (let ((start (codex-ide-session-input-start-marker session))
+                  (end (codex-ide--input-end-position session))
+                  (inhibit-read-only t))
+              (goto-char end)
+              (skip-chars-backward " \t\n\r" start)
+              ;; Replace only trailing whitespace to preserve draft properties.
+              (codex-ide--with-transcript-render-transaction-at
+               (session (current-buffer) (point) :local t)
+               (codex-ide-renderer-replace-region
+                (point) end
+                (if (> (point) start) (concat "\n\n" annotation) annotation))
+               (codex-ide--refresh-input-placeholder session)
+               (codex-ide--refresh-pending-local-images-display session)
+               (codex-ide--transcript-render-context-note-position
+                (point-max))))))
         (message "Annotation added; open the session buffer and press C-c RET to send")))))
 
 ;;;###autoload

@@ -69,17 +69,33 @@
                 (should (string-match-p "Selected text:\nalpha" sent-text))
                 (should (string-match-p "Selected text:\nbeta" sent-text))))))))))
 
-(ert-deftest codex-ide-region-annotation-preserves-existing-draft ()
+(ert-deftest codex-ide-region-annotation-preserves-draft-and-skill-binding ()
   (let* ((project-dir (codex-ide-test--make-temp-project))
          (file-path (codex-ide-test--make-project-file
-                     project-dir "src/example.el" "alpha\n")))
+                     project-dir "src/example.el" "alpha\n"))
+         (default-skill-path (expand-file-name "default/SKILL.md" project-dir))
+         (selected-skill-path (expand-file-name "selected/SKILL.md" project-dir))
+         (draft-prefix "Review these changes with "))
     (codex-ide-test-with-fixture project-dir
       (codex-ide-test-with-fake-processes
         (let ((transient-mark-mode t)
               (session (codex-ide--create-process-session)))
           (setf (codex-ide-session-status session) "idle")
+          (codex-ide--session-metadata-put
+           session :skills-list
+           (list `((name . "review") (enabled . t) (path . ,default-skill-path))
+                 `((name . "review") (enabled . t) (path . ,selected-skill-path))))
+          (codex-ide--session-metadata-put session :skills-list-state 'ready)
           (with-current-buffer (codex-ide-session-buffer session)
-            (codex-ide--insert-input-prompt session "Review these changes"))
+            (codex-ide--insert-input-prompt
+             session (concat draft-prefix "$review  \n"))
+            (let ((start (+ (codex-ide-session-input-start-marker session)
+                            (length draft-prefix))))
+              (add-text-properties
+               start (+ start (length "$review"))
+               (list codex-ide-mention--binding-property
+                     (list :sigil "$" :kind 'skill :name "review"
+                           :path selected-skill-path)))))
           (cl-letf (((symbol-function 'read-from-minibuffer)
                      (lambda (&rest _) "Check alpha"))
                     ((symbol-function 'codex-ide--ensure-session-for-current-project)
@@ -90,10 +106,14 @@
               (forward-char 5)
               (activate-mark)
               (codex-ide-annotate-region)))
-          (let ((draft (with-current-buffer (codex-ide-session-buffer session)
-                         (codex-ide--current-input session))))
-            (should (string-prefix-p "Review these changes\n\n" draft))
-            (should (string-match-p "Check alpha" draft))))))))
+          (with-current-buffer (codex-ide-session-buffer session)
+            (let* ((draft (codex-ide--current-input session))
+                   (items (codex-ide-mention-input-items draft session)))
+              (should (string-prefix-p (concat draft-prefix "$review\n\n") draft))
+              (should (string-match-p "Check alpha" draft))
+              (should (= (length items) 1))
+              (should (equal (alist-get 'path (aref items 0))
+                             selected-skill-path)))))))))
 
 (ert-deftest codex-ide-region-annotation-keeps-session-window-position ()
   (let ((project-dir (codex-ide-test--make-temp-project)))
