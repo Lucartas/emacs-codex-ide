@@ -299,6 +299,11 @@ thread-list limit."
   (message "codex-ide logging %s"
            (if codex-ide-logging-enabled "enabled" "disabled")))
 
+;; The annotation command can start a session, so load the package entry point.
+;;;###autoload
+(autoload 'codex-ide-annotate-region "codex-ide"
+  "Append the active region and a note to the current Codex prompt draft." t)
+
 (require 'codex-ide-core)
 (require 'codex-ide-approvals-data)
 (require 'codex-ide-config)

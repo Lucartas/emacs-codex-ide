@@ -6626,7 +6626,8 @@ compatibility with older app-server payloads and global notifications."
   "Return prompt text for SESSION using explicit PROMPT or the active input."
   (or prompt
       (if (eq (current-buffer) (codex-ide-session-buffer session))
-          (codex-ide--current-input session)
+          (codex-ide-mention-preserve-literal-text
+           (codex-ide--current-input session) session)
         (read-string "Codex prompt: "))))
 
 (defun codex-ide--submission-origin-buffer (session)
@@ -6948,6 +6949,53 @@ the mismatch warning only reflects meaningful behavior changes."
   "Submit SESSION's queued prompt if one exists."
   (when (codex-ide--queued-prompt-p session)
     (codex-ide--submit-queued-prompt session)))
+
+(defun codex-ide-annotate-region ()
+  "Append the active region and a note to the current Codex prompt draft.
+The draft is not submitted; use `codex-ide-submit' when it is ready."
+  (interactive)
+  (let ((region (codex-ide--buffer-selection-context (current-buffer))))
+    (unless region
+      (user-error "Select a region to annotate"))
+    (let* ((start (alist-get 'start region))
+           (end (alist-get 'end region))
+           (source (or (buffer-file-name) (buffer-name)))
+           (selection (buffer-substring-no-properties start end))
+           (note (read-from-minibuffer "Annotation: ")))
+      (when (string-empty-p (string-trim note))
+        (user-error "Annotation cannot be empty"))
+      (let* ((session (codex-ide--ensure-session-for-current-project))
+             (annotation
+              (concat
+               (format "Annotation for %s:%d:%d-%d:%d\nNote: %s\nSelected text:\n"
+                       source
+                       (alist-get 'start-line region)
+                       (alist-get 'start-column region)
+                       (alist-get 'end-line region)
+                       (alist-get 'end-column region)
+                       note)
+               (codex-ide-mention-mark-literal selection 0 (length selection)))))
+        (with-current-buffer (codex-ide-session-buffer session)
+          (save-excursion
+            (codex-ide--ensure-input-prompt session)
+            (unless (codex-ide--input-prompt-active-p session)
+              (user-error "No editable Codex prompt is available"))
+            (let ((start (codex-ide-session-input-start-marker session))
+                  (end (codex-ide--input-end-position session))
+                  (inhibit-read-only t))
+              (goto-char end)
+              (skip-chars-backward " \t\n\r" start)
+              ;; Replace only trailing whitespace to preserve draft properties.
+              (codex-ide--with-transcript-render-transaction-at
+               (session (current-buffer) (point) :local t)
+               (codex-ide-renderer-replace-region
+                (point) end
+                (if (> (point) start) (concat "\n\n" annotation) annotation))
+               (codex-ide--refresh-input-placeholder session)
+               (codex-ide--refresh-pending-local-images-display session)
+               (codex-ide--transcript-render-context-note-position
+                (point-max))))))
+        (message "Annotation added; open the session buffer and press C-c RET to send")))))
 
 ;;;###autoload
 (defun codex-ide-prompt ()

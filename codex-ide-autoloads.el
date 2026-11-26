@@ -121,6 +121,8 @@ thread-list limit.")
 (custom-autoload 'codex-ide-thread-list-default-limit "codex-ide" t)
 (autoload 'codex-ide-toggle-logging-enabled "codex-ide"
 "Toggle `codex-ide-logging-enabled' interactively." t)
+(autoload 'codex-ide-annotate-region "codex-ide"
+"Append the active region and a note to the current Codex prompt draft." t)
 (register-definition-prefixes "codex-ide" '("codex-ide-buffer-display-when-approval-required"))
 
 

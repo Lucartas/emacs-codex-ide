@@ -417,12 +417,15 @@ Mentions are represented as plists.  The parser follows Codex TUI mention
 syntax for plain `$name' and linked `[$name](path)' skill mentions.  Future
 `@' file, directory, and plugin mentions are intentionally not parsed yet.
 SESSION is used to distinguish linked skill mentions from ordinary Markdown
-links whose labels happen to start with `$'."
+links whose labels happen to start with `$'.  Literal text is skipped."
   (let ((index 0)
         mentions)
     (while (< index (length text))
       (let ((char (aref text index)))
         (cond
+         ((get-text-property index 'codex-ide-mention-literal text)
+          (setq index (next-single-property-change
+                       index 'codex-ide-mention-literal text (length text))))
          ((and (eq char ?\[)
                (codex-ide-mention--parse-linked-mention-at text index))
           (let ((mention (codex-ide-mention--parse-linked-mention-at
@@ -493,6 +496,29 @@ links whose labels happen to start with `$'."
             session
             prompt))
       prompt))
+
+(defun codex-ide-mention-mark-literal (text start end)
+  "Mark the range from START to END in TEXT as literal and return TEXT."
+  (when (< start end)
+    (put-text-property start end 'codex-ide-mention-literal t text)
+    ;; Typing after the excerpt should produce ordinary prompt text.
+    (put-text-property (1- end) end 'rear-nonsticky
+                       '(codex-ide-mention-literal) text))
+  text)
+
+(defun codex-ide-mention-preserve-literal-text (prompt &optional session)
+  "Return PROMPT carrying only its literal mention ranges from SESSION."
+  (let* ((source (codex-ide-mention--source-text prompt session))
+         (text (substring-no-properties source))
+         (end (length source))
+         (start 0))
+    (while (< start end)
+      (let ((next (next-single-property-change
+                   start 'codex-ide-mention-literal source end)))
+        (when (get-text-property start 'codex-ide-mention-literal source)
+          (codex-ide-mention-mark-literal text start next))
+        (setq start next)))
+    text))
 
 (defun codex-ide-mention--resolve-mentions (mentions skills)
   "Resolve MENTIONS against SKILLS using Codex TUI ordering semantics."
@@ -593,7 +619,7 @@ Only `$' skill mentions produce input items today."
                     (lambda (mention)
                       (eq (plist-get mention :source) 'binding))
                     (codex-ide-mention--collect-mentions source session)))
-         (text (substring-no-properties source)))
+         (text (codex-ide-mention-preserve-literal-text source)))
     (dolist (mention (reverse mentions))
       (let ((start (plist-get mention :start))
             (end (plist-get mention :end))
@@ -617,6 +643,8 @@ User-authored Markdown links are preserved."
         (out ""))
     (while (< index (length prompt))
       (let ((mention (and (eq (aref prompt index) ?\[)
+                          (not (get-text-property
+                                index 'codex-ide-mention-literal prompt))
                           (codex-ide-mention--parse-linked-mention-at
                            prompt
                            index))))
