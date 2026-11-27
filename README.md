@@ -61,7 +61,7 @@ _Emacs-widget based interactive approvals_
 ### Prerequisites
 
 - Emacs 28.1 or higher
-- Codex CLI installed and available on `PATH`
+- Codex CLI 0.140.0 or newer, installed and available on `PATH`
 - `transient` installed
 - `python3` and `emacsclient` available if you want the optional Emacs MCP bridge
 

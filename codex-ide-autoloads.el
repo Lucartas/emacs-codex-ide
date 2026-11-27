@@ -314,13 +314,8 @@ Decode JSON PAYLOAD, dispatch a bridge tool call, and return JSON.
 (autoload 'codex-ide-delete-session-thread "codex-ide-delete-session-thread"
   "Delete Codex THREAD-ID from the active `CODEX_HOME`.
 
-Prefer the public app-server `thread/delete' API.  For compatibility with older
-Codex app-server builds, fall back to current Codex internal storage details
-under `CODEX_HOME`, specifically persisted rollout files under the sessions
-directory, only when app-server reports that `thread/delete' is unsupported.
-
-If a live session buffer is attached to THREAD-ID, prompt before deleting the
-thread and then tear down the local session buffer.
+Use the app-server `thread/delete' API and close any attached Emacs
+session buffer after the request succeeds.
 
 When SKIP-CONFIRMATION is non-nil, delete without prompting.  This is intended
 for batch callers that already presented a single confirmation.

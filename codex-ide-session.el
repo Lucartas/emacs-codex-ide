@@ -96,12 +96,38 @@
           (codex-ide-usage-refresh-rate-limits refresh-session)))
       session))))
 
+(defconst codex-ide-minimum-codex-version "0.140.0"
+  "Minimum Codex CLI version required to start app-server.")
+
+(defun codex-ide--cli-version-output ()
+  "Return the configured Codex CLI version output, or nil if unavailable."
+  (condition-case nil
+      (with-temp-buffer
+        (when (eq (call-process codex-ide-cli-path nil (list t nil) nil "--version") 0)
+          (string-trim (buffer-string))))
+    (file-error nil)))
+
 (defun codex-ide--detect-cli ()
   "Detect whether the Codex CLI is available."
-  (setq codex-ide--cli-available
-        (condition-case nil
-            (eq (call-process codex-ide-cli-path nil nil nil "--version") 0)
-          (error nil))))
+  (setq codex-ide--cli-available (and (codex-ide--cli-version-output) t)))
+
+(defun codex-ide--check-cli-version ()
+  "Reject CLI releases older than the minimum before starting app-server."
+  (let ((output (codex-ide--cli-version-output)))
+    (unless output
+      (user-error "Codex CLI not available. Install it and ensure it is on PATH"))
+    (if (string-match
+         "\\`codex\\(?:-cli\\)? +\\([0-9]+\\.[0-9]+\\.[0-9]+\\)\\(-[[:alnum:].-]+\\)?\\(?:[+][[:alnum:].-]+\\)?\\'"
+         output)
+        (let ((version (match-string 1 output))
+              (prerelease (match-string 2 output)))
+          (when (or (version< version codex-ide-minimum-codex-version)
+                    (and prerelease
+                         (version= version codex-ide-minimum-codex-version)))
+            (user-error "Codex IDE requires Codex CLI %s or newer (found %s%s). Upgrade Codex CLI"
+                        codex-ide-minimum-codex-version version (or prerelease ""))))
+      (display-warning 'codex-ide
+                       (format "Could not verify Codex CLI version from %S" output)))))
 
 (defun codex-ide--ensure-cli ()
   "Ensure the Codex CLI is available."
@@ -263,10 +289,11 @@ When KILL-LOG-BUFFER is non-nil, also kill SESSION's log buffer."
   "Create a new app-server-backed session for the current working directory.
 When QUERY-ONLY is non-nil, create a headless session used only for
 protocol requests such as thread listing."
-  (let ((working-dir (codex-ide--get-working-directory)))
-    (let* ((process-environment
-            (codex-ide--app-server-process-environment process-environment))
-           (name-suffix (cond
+  (let ((working-dir (codex-ide--get-working-directory))
+        (process-environment
+         (codex-ide--app-server-process-environment process-environment)))
+    (codex-ide--check-cli-version)
+    (let* ((name-suffix (cond
                          (query-only 0)
                          (reuse-buffer reuse-name-suffix)
                          (t (codex-ide--next-session-name-suffix working-dir))))
@@ -739,13 +766,8 @@ protocol requests such as thread listing."
 (defun codex-ide-show-cli-info ()
   "Report Codex CLI availability and version."
   (interactive)
-  (codex-ide--detect-cli)
-  (if codex-ide--cli-available
-      (let* ((version
-              (with-temp-buffer
-                (call-process codex-ide-cli-path nil t nil "--version")
-                (string-trim (buffer-string))))
-             (bridge-status (codex-ide-mcp-bridge-status))
+  (if-let* ((version (codex-ide--cli-version-output)))
+      (let* ((bridge-status (codex-ide-mcp-bridge-status))
              (bridge-enabled (alist-get 'enabled bridge-status))
              (bridge-ready (alist-get 'ready bridge-status))
              (bridge-script (alist-get 'scriptPath bridge-status))
