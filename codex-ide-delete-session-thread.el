@@ -41,6 +41,10 @@
       (let ((kill-buffer-query-functions nil))
         (kill-buffer buffer)))))
 
+(defconst codex-ide--thread-deletion-confirmation-note
+  "Permanent thread deletion includes any spawned subagent threads. "
+  "Notice to include when asking for confirmation to delete stored threads.")
+
 ;;;###autoload
 (defun codex-ide-delete-session-thread (thread-id &optional skip-confirmation)
   "Delete Codex THREAD-ID from the active `CODEX_HOME`.
@@ -64,14 +68,16 @@ for batch callers that already presented a single confirmation."
          (buffer-name (and (buffer-live-p buffer) (buffer-name buffer))))
     (unless (or skip-confirmation
                 (yes-or-no-p
-                 (if buffer-name
-                     (format "Delete Codex buffer %s and permanently remove thread %s from %s? "
-                             buffer-name
-                             thread-id
-                             (abbreviate-file-name (codex-ide--codex-home)))
-                   (format "Permanently remove Codex thread %s from %s? "
-                           thread-id
-                           (abbreviate-file-name (codex-ide--codex-home))))))
+                 (concat
+                  (if buffer-name
+                      (format "Delete Codex buffer %s and permanently remove thread %s from %s? "
+                              buffer-name
+                              thread-id
+                              (abbreviate-file-name (codex-ide--codex-home)))
+                    (format "Permanently remove Codex thread %s from %s? "
+                            thread-id
+                            (abbreviate-file-name (codex-ide--codex-home))))
+                  codex-ide--thread-deletion-confirmation-note)))
       (user-error "Canceled deletion of Codex thread %s" thread-id))
     (codex-ide--request-sync
      (or session

@@ -909,10 +909,8 @@
 						 (ert-fail "Unexpected y-or-n-p prompt")))
 					      ((symbol-function 'yes-or-no-p)
 					       (lambda (prompt)
-						 (should (equal prompt
-								(format "Permanently remove 1 Codex thread from %s? "
-									(abbreviate-file-name
-									 (codex-ide--codex-home)))))
+						 (should (string-search "Permanently remove 1 Codex thread" prompt))
+						 (should (string-search "spawned subagent threads" prompt))
 						 t)))
 				      (let ((default-directory project-dir))
 					(codex-ide-status))
@@ -975,10 +973,8 @@
 					      ((symbol-function 'yes-or-no-p)
 					       (lambda (prompt)
 						 (setq confirmation-count (1+ confirmation-count))
-						 (should (equal prompt
-								(format "Permanently remove 2 Codex threads from %s? "
-									(abbreviate-file-name
-									 (codex-ide--codex-home)))))
+						 (should (string-search "Permanently remove 2 Codex threads" prompt))
+						 (should (string-search "spawned subagent threads" prompt))
 						 t)))
 				      (let ((default-directory project-dir))
 					(codex-ide-status))
@@ -1003,6 +999,16 @@
 					(should-not (string-match-p "thread-a" (buffer-string)))
 					(should-not (string-match-p "thread-b" (buffer-string)))
 					(should (string-match-p "thread-g" (buffer-string))))))))))
+
+(ert-deftest codex-ide-status-delete-mixed-selection-warns-about-subagents ()
+  (let ((sections (list (codex-ide-section--create :type 'buffer)
+                        (codex-ide-section--create :type 'thread))))
+    (cl-letf (((symbol-function 'y-or-n-p)
+               (lambda (prompt)
+                 (should (string-search "2 Codex status entries" prompt))
+                 (should (string-search "spawned subagent threads" prompt))
+                 nil)))
+      (should-not (codex-ide-status-mode--confirm-delete-sections sections)))))
 
 (ert-deftest codex-ide-status-kill-buffer-at-point-kills-live-thread-buffer ()
   (let* ((root-dir (codex-ide-test--make-temp-project))
