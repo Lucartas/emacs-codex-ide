@@ -138,7 +138,9 @@
                  (lambda (&rest _) nil))
            (fset 'accept-process-output
                  (lambda (&rest _) nil))
-           ,@body)
+           (cl-letf (((symbol-function 'codex-ide--cli-version-output)
+                      (lambda () "codex-cli 99.0.0")))
+             ,@body))
        (fset 'make-process old-make-process)
        (fset 'make-pipe-process old-make-pipe-process)
        (fset 'process-live-p old-process-live-p)

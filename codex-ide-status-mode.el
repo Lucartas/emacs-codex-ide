@@ -314,7 +314,8 @@ Only child `buffer' and `thread' sections support visit and delete actions."
   (codex-ide--prepare-session-operations)
   (let ((codex-home (abbreviate-file-name (codex-ide--codex-home))))
     (when (yes-or-no-p
-           (format "Permanently remove 1 Codex thread from %s? " codex-home))
+           (concat (format "Permanently remove 1 Codex thread from %s? " codex-home)
+                   codex-ide--thread-deletion-confirmation-note))
       (codex-ide-delete-session-thread (alist-get 'id thread) t)
       (codex-ide-status-mode-refresh))))
 
@@ -350,7 +351,10 @@ Only child `buffer' and `thread' sections support visit and delete actions."
      (t
       (setq prompt (format "Delete %d Codex status entries? " count)
             confirm-function #'y-or-n-p)))
-    (funcall confirm-function prompt)))
+    (funcall confirm-function
+             (if (> thread-count 0)
+                 (concat prompt codex-ide--thread-deletion-confirmation-note)
+               prompt))))
 
 (defun codex-ide-status-mode--delete-sections (sections)
   "Delete SECTIONS after one confirmation and refresh once."
